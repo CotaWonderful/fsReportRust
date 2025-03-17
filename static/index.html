@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>資訊部傳檔Scan Server</title>
+        <!-- Insert this line above script imports  -->
+        <script>
+            if (typeof module === 'object') {window.module = module; module = undefined;}
+        </script>
+        <link href="/css/jquery-ui-1.12.1.min.css" rel="stylesheet" type="text/css" />
+        <script src="/js/jquery-3.2.1.min.js"></script>
+        <script src="/js/jquery-ui-1.12.1.min.js"></script>
+        <script src="/js/webFunc.js"></script>
+        <script>if (window.module) module = window.module;</script>
+    </head>
+    <style>
+        select {
+            width: 10em; 
+            height: 2em;
+            font-size: 12pt;
+        }
+        input, button{
+            font-size: 12pt;
+        }
+    </style>
+    <script>
+        // initialize
+        $(function(){
+            $( "#datepickerFrom" ).datepicker({ dateFormat: 'yy-mm-dd' });
+            $( "#datepickerFrom" ).datepicker("setDate", new Date());
+            $( "#datepickerTo" ).datepicker({ dateFormat: 'yy-mm-dd' });
+            $( "#datepickerTo" ).datepicker("setDate", new Date());
+            $("#recordTable").hide();
+        })
+    </script>
+   <body>
+       
+    <div>
+        <h3 style="color:rgb(0, 0, 0)">員編</h3>
+        <input type="text" id="emp_no" />
+
+        <h3 style="color:rgb(0, 0, 0)">3.請選擇區間查詢紀錄</h3>
+        <div>
+            <span class="mid-text">起始時間:</span> <input type="text" id="datepickerFrom">
+            <span class="mid-text">結束時間:</span> <input type="text" id="datepickerTo">
+            <br><br>
+            <button class="button" onclick="getReportList()">查詢掃描記錄</button>
+        </div>
+        
+        <table id="recordTable" class="zui-table" width="50%" style="margin: 0px;">
+            <thead>
+                <tr style="background-color:#b7ece1">
+                    <th style="width: 20%;">&nbsp;ID</th>
+                    <th style="width: 20%;">時間</th>
+                    <th style="width: 20%;">檔名</th>
+                </tr>
+            </thead>
+            <tbody  id="recordTBody">
+            </tbody>
+        </table>
+
+     </div>
+   </body>
+
+   <script>
+
+        // 查詢紀錄
+        async function getReportList() {
+            var sDate = $( "#datepickerFrom" ).datepicker().val();
+            var eDate = $( "#datepickerTo" ).datepicker().val();
+            var emp_no = $( "#emp_no" ).val();
+            if ( (new Date(sDate)).getTime() > (new Date(eDate)).getTime() ) {
+                alert("日期區間錯誤!!");
+                return;
+            }
+
+            var post_data = {
+                sDate: sDate,
+                eDate: eDate,
+                emp_no: emp_no
+            }
+            let res = await send_to_server(post_data, "POST", "getReportList");
+            if (res) {
+                // 更新表格， 修改DOM
+                refreshDOM(res);
+            }
+                
+        }
+
+        function refreshDOM(data) 
+        {
+            $("tr[name='content']").remove();
+            if (data.length == 0) {
+                alert("查無資料");
+                return;
+            }
+            data.forEach(function(element, idx) {
+                var pad2 = function(n) { 
+                    return (n < 10 ? '0' : '') + n;
+                }
+                var logDate = new Date(element.scan_time);   // Format datetime
+                var logDateStr =  logDate.getFullYear() + "/"
+                                + pad2(logDate.getMonth()+1)  + "/"
+                                + pad2(logDate.getDate()) + " "
+                                + pad2(logDate.getHours()) + ":"  
+                                + pad2(logDate.getMinutes()) + ":" 
+                                + pad2(logDate.getSeconds());
+                var newRowContent = '<tr name="content">';
+
+                if (idx % 2 == 0)
+                    newRowContent = '<tr name="content" style="background-color:#DEDEDE">';
+                        
+                newRowContent = newRowContent + 
+                                    '<td style="width: 20%;">' + element.id + '</td>' +
+                                    '<td style="width: 20%;">' + logDateStr + '</td>'+
+                                    '<td style="width: 20%;"><a href="javascript: getReport(' + element.id + ')">' + element.scan_file + '</a></td>'+ 
+                                    '</tr>';
+                $("#recordTBody").append(newRowContent);
+                $("#recordTable").show();
+            });
+
+            
+            //$("#loading").hide();
+        }
+    
+        async function getReport(id) {
+            var post_data = {
+                id: id
+            }
+            let res = await send_to_server(post_data, "POST", "getReport");
+            if (res) {
+                document.write(res);
+            }
+        }
+
+
+    function send_to_server(post_data, method, url)
+    {
+        return new Promise((resolve, reject)=>{
+            $.ajax({
+			type: method,
+			data: post_data,
+			url: '{reverseProxyPrefix}/' + url,						
+			success: result => {
+                resolve(result);
+            },
+            error: (xrs, textStatus, myThrow) => {
+                debugger;
+                reject();
+                var errMsg = "發生錯誤: status = " + xrs.status + ", 訊息: " + xrs.responseText;
+                alert(errMsg);
+                console.log(errMsg);
+				console.log(textStatus);
+                console.log(myThrow);
+                //$("#loading").hide();
+            }
+		    });
+        });
+        
+    }
+
+    
+</script>
+
+</html>
