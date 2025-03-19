@@ -5,11 +5,15 @@ use rocket::fs::NamedFile;
 use rocket::fs::relative;
 use std::path::{Path, PathBuf};
 use rocket::form::Form;
+use rocket::fs::TempFile;
 use rocket::tokio::time::{sleep, Duration};
 use mysql_async::{OptsBuilder, Conn, Opts};
 use mysql_async::prelude::*;
 
-#[derive(Serialize, Deserialize)]
+// 屬性以 #[...] 或 #![...] 的形式出現
+// #[derive(...)] 是一種特殊的屬性（attribute），用於自動實作 trait。
+// Trait 類似於其他程式語言中的介面（interface）
+#[derive(Serialize, Deserialize)] // 
 #[serde(crate = "rocket::serde")]
 struct Message {
     message: String,
@@ -73,6 +77,23 @@ async fn getReport(form: Form<FormData>) -> String {
 
 }
 
+#[derive(FromForm)]
+struct Upload {
+    user: String,
+    scan_file: String,
+    scan_time: String,
+    report_file: String,
+    result: String,
+}
+
+// 處理fscliApp丟過來的F-Secure 報告(.html檔)
+#[post("/uploadReport", data = "<upload>")]
+fn uploadReport(upload: Form<Upload>) -> String {
+    // print user
+    println!("{}", upload.user);
+    format!("OK")
+}
+
 /*#[post("/json", format = "json", data = "<data>")]
 fn post_json(data: Json<Message>) -> Json<Message> {
     //data
@@ -81,7 +102,7 @@ fn post_json(data: Json<Message>) -> Json<Message> {
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![index, message, getReportList, getReport])
+        .mount("/", routes![index, message, getReportList, getReport, uploadReport])
         .mount("/", FileServer::from(relative!("static"))) // 指定static目錄
 }
 
