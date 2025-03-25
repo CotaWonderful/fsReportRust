@@ -7,3 +7,5 @@ edition = "2021"
 rocket = { version = "0.5.0", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
 mysql_async = { version = "0.35.1" }
+rocket-multipart-form-data = { version = "0.10.7" }
+tokio = { version = "1.44.0" }

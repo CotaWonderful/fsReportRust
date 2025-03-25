@@ -6,6 +6,9 @@ use rocket::fs::relative;
 use std::path::{Path, PathBuf};
 use rocket::form::Form;
 use rocket::fs::TempFile;
+use rocket::Data;
+use rocket::http::ContentType;
+use rocket_multipart_form_data::{mime, MultipartFormDataOptions, MultipartFormData, MultipartFormDataField, Repetition};
 use rocket::tokio::time::{sleep, Duration};
 use mysql_async::{OptsBuilder, Conn, Opts};
 use mysql_async::prelude::*;
@@ -77,21 +80,54 @@ async fn getReport(form: Form<FormData>) -> String {
 
 }
 
-#[derive(FromForm)]
-struct Upload {
-    user: String,
-    scan_file: String,
-    scan_time: String,
-    report_file: String,
-    result: String,
-}
-
 // 處理fscliApp丟過來的F-Secure 報告(.html檔)
-#[post("/uploadReport", data = "<upload>")]
-fn uploadReport(upload: Form<Upload>) -> String {
-    // print user
-    println!("{}", upload.user);
-    format!("OK")
+//#[post("/uploadReport", data = "<upload>")]
+//fn uploadReport(upload: Form<Upload>) -> String {
+#[post("/uploadReport", data = "<data>")]
+async fn uploadReport(content_type: &ContentType, data: Data<'_>) -> &'static str {
+
+    let mut options = MultipartFormDataOptions::with_multipart_form_data_fields(
+        vec! [
+            //MultipartFormDataField::file("scan_file").content_type_by_string(Some(mime::TEXT)).unwrap(),
+            // file is application/octet-stream
+            //MultipartFormDataField::file("photo").content_type_by_string(Some(mime::IMAGE_STAR)).unwrap(),
+            MultipartFormDataField::file("scan_file").content_type_by_string(Some(mime::APPLICATION_OCTET_STREAM)).unwrap(),
+            MultipartFormDataField::text("result"),
+            MultipartFormDataField::text("scan_file_name"),
+            MultipartFormDataField::text("scan_time"),
+            MultipartFormDataField::text("user"),
+            MultipartFormDataField::text("report_file"),
+        ]
+    );
+    let mut multipart_form_data = MultipartFormData::parse(content_type, data, options).await.unwrap();
+    let user = multipart_form_data.texts.remove("user"); // Use the remove method to move text fields out of the MultipartFormData instance (recommended)
+    /*let scan_file_path = multipart_form_data.texts.remove("scan_file");
+    let scan_time = multipart_form_data.texts.remove("scan_time");
+    let report_file = multipart_form_data.texts.remove("report_file");
+    let result = multipart_form_data.texts.remove("result");
+    let scan_file = multipart_form_data.files.remove("scan_file");*/
+    // 取得前端上傳的檔案
+
+    //println!("scan_file: {:?}", scan_file);
+    let scan_file = multipart_form_data.files.get("scan_file");
+    if let Some(file_fields) = scan_file {
+        let file_field = &file_fields[0]; // Because we only put one "photo" field to the allowed_fields, the max length of this file_fields is 1.
+     
+        let _content_type = &file_field.content_type;
+        let _file_name = &file_field.file_name;
+        let _path = &file_field.path;
+     
+        // You can now deal with the uploaded file.
+        println!("scan_file: {:?}", file_field.path);
+    }   
+    if let Some(mut text_fields) = user {
+        println!("text_fields: {:?}", text_fields);
+        let text_field = &text_fields[0]; //text_fields.remove(0); // Because we only put one "text" field to the allowed_fields, the max length of this text_fields is 1.
+        //let _text = text_field.text;
+        println!("user: {}", text_field.text);
+    }
+    
+    "ok"
 }
 
 /*#[post("/json", format = "json", data = "<data>")]
