@@ -4,6 +4,9 @@ use rocket::fs::FileServer;
 use rocket::fs::NamedFile;
 use rocket::fs::relative;
 use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io;
+use std::io::prelude::*;
 use rocket::form::Form;
 use rocket::fs::TempFile;
 use rocket::Data;
@@ -45,26 +48,24 @@ fn message(name: String) -> String {
 }
 
 #[get("/getReportList")]
-async fn getReportList() -> String {
+async fn get_report_list() -> String {
     let path: PathBuf = Path::new("static/index.html").to_path_buf();
     //NamedFile::open(path).await.ok()
     format!("Hello, {}!", path.display())
 }
 
 #[post("/getReport", data = "<form>")]
-async fn getReport(form: Form<FormData>) -> String {
+async fn get_report(form: Form<FormData>) -> String {
 
     let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
     let mut conn = Conn::new(opts).await.unwrap();
+    
+    // SELECT語法
     let loaded_report = format!("SELECT report_file, report_data FROM reports where emp_no = {}", form.emp_no)
         .with(())
         .map(&mut conn, |(report_file, report_data)| ScanReport { report_file, report_data })
         .await;
     
-    /*let result = match loaded_report {
-        Ok(report) => report,
-        Err(e) => "Error"
-    };*/
     drop(conn);
     let mut res_msg = String::from("Error");
     if let Ok(report) = loaded_report {
@@ -83,14 +84,11 @@ async fn getReport(form: Form<FormData>) -> String {
 // 處理fscliApp丟過來的F-Secure 報告(.html檔)
 //#[post("/uploadReport", data = "<upload>")]
 //fn uploadReport(upload: Form<Upload>) -> String {
-#[post("/uploadReport", data = "<data>")]
-async fn uploadReport(content_type: &ContentType, data: Data<'_>) -> &'static str {
-
+#[post("/upload_report", data = "<data>")]
+async fn upload_report(content_type: &ContentType, data: Data<'_>) -> String {
+    let mut error_message = String::from("");
     let mut options = MultipartFormDataOptions::with_multipart_form_data_fields(
         vec! [
-            //MultipartFormDataField::file("scan_file").content_type_by_string(Some(mime::TEXT)).unwrap(),
-            // file is application/octet-stream
-            //MultipartFormDataField::file("photo").content_type_by_string(Some(mime::IMAGE_STAR)).unwrap(),
             MultipartFormDataField::file("scan_file").content_type_by_string(Some(mime::APPLICATION_OCTET_STREAM)).unwrap(),
             MultipartFormDataField::text("result"),
             MultipartFormDataField::text("scan_file_name"),
@@ -99,35 +97,94 @@ async fn uploadReport(content_type: &ContentType, data: Data<'_>) -> &'static st
             MultipartFormDataField::text("report_file"),
         ]
     );
-    let mut multipart_form_data = MultipartFormData::parse(content_type, data, options).await.unwrap();
-    let user = multipart_form_data.texts.remove("user"); // Use the remove method to move text fields out of the MultipartFormData instance (recommended)
-    /*let scan_file_path = multipart_form_data.texts.remove("scan_file");
-    let scan_time = multipart_form_data.texts.remove("scan_time");
-    let report_file = multipart_form_data.texts.remove("report_file");
-    let result = multipart_form_data.texts.remove("result");
-    let scan_file = multipart_form_data.files.remove("scan_file");*/
-    // 取得前端上傳的檔案
-
-    //println!("scan_file: {:?}", scan_file);
-    let scan_file = multipart_form_data.files.get("scan_file");
-    if let Some(file_fields) = scan_file {
-        let file_field = &file_fields[0]; // Because we only put one "photo" field to the allowed_fields, the max length of this file_fields is 1.
-     
-        let _content_type = &file_field.content_type;
-        let _file_name = &file_field.file_name;
-        let _path = &file_field.path;
-     
-        // You can now deal with the uploaded file.
-        println!("scan_file: {:?}", file_field.path);
-    }   
-    if let Some(mut text_fields) = user {
-        println!("text_fields: {:?}", text_fields);
-        let text_field = &text_fields[0]; //text_fields.remove(0); // Because we only put one "text" field to the allowed_fields, the max length of this text_fields is 1.
-        //let _text = text_field.text;
-        println!("user: {}", text_field.text);
-    }
     
-    "ok"
+    loop {
+        let mut multipart_form_data = match MultipartFormData::parse(content_type, data, options).await {
+            Ok(multipart_form_data) => multipart_form_data,
+            Err(e) => {
+                error_message = format!("解析資料時發生錯誤: {}", e);
+                break;
+            }
+        };
+        // 解析欄位
+        let user = match multipart_form_data.texts.remove("user") { // Use the remove method to move text fields out of the MultipartFormData instance (recommended)
+            Some(user) => user[0].text.to_string(),
+            None => {
+                error_message = String::from("欄位不得為空: user");
+                break;
+            }
+        };
+        let scan_file_name = match multipart_form_data.texts.remove("scan_file_name") {
+            Some(scan_file_name) => scan_file_name[0].text.to_string(),
+            None => {
+                error_message = String::from("欄位不得為空: scan_file_name");
+                break;
+            }
+        };
+        let scan_time = match multipart_form_data.texts.remove("scan_time") {
+            Some(scan_time) => scan_time[0].text.to_string(),
+            None => {
+                error_message = String::from("欄位不得為空: scan_time");
+                break;
+            }
+        };
+        let report_file = match multipart_form_data.texts.remove("report_file") {
+            Some(report_file) => report_file[0].text.to_string(),
+            None => {
+                error_message = String::from("欄位不得為空: report_file");
+                break;
+            }
+        };
+        let result = match multipart_form_data.texts.remove("result") {
+            Some(result) => result[0].text.to_string(),
+            None => {
+                error_message = String::from("欄位不得為空: result");
+                break;
+            }
+        };
+        let scan_file = multipart_form_data.files.remove("scan_file");
+        println!("scan_file {:?}", scan_file);
+        
+        // 取得前端上傳的檔案，並寫入DB
+        let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
+        let mut conn = Conn::new(opts).await.unwrap();
+        if let Some(file_fields) = scan_file {
+            let file_field = &file_fields[0]; // Because we only put one "photo" field to the allowed_fields, the max length of this file_fields is 1.
+            let _path = &file_field.path; // 取得暫存檔路徑
+            // 讀取檔案內容,並寫入db
+            let mut f = match File::open(_path) {
+                Ok(f) => f,
+                Err(e) => {
+                    error_message = format!("Server端無法開啟前端上傳的檔案, 錯誤: {}", e);
+                    break;
+                }
+            };
+            let mut buffer = Vec::new();
+            match f.read_to_end(&mut buffer) {
+                Ok(_) => {},
+                Err(e) => {
+                    error_message = format!("Server端無法讀取前端上傳的檔案({}), 錯誤: {}",report_file, e); 
+                    break;
+                }
+            };
+            match conn.exec_drop("INSERT INTO reports(emp_no, scan_time, scan_file, result, report_file, report_data) VALUES (?, ?, ?, ?, ?, ?)", (user, scan_time, scan_file_name, result, report_file, buffer)).await {
+                Ok(_) => {},
+                Err(e) => {
+                    error_message = format!("Server端寫入DB失敗, 錯誤: {}", e);
+                    break;
+                }
+            }
+        } else {
+            error_message = String::from("欄位不得為空: scan_file");
+        }
+        break;
+    };
+
+    if !error_message.is_empty() {
+        return error_message;
+    }
+
+    String::from("ok")
 }
 
 /*#[post("/json", format = "json", data = "<data>")]
@@ -138,7 +195,7 @@ fn post_json(data: Json<Message>) -> Json<Message> {
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![index, message, getReportList, getReport, uploadReport])
+        .mount("/", routes![index, message, get_report_list, get_report, upload_report])
         .mount("/", FileServer::from(relative!("static"))) // 指定static目錄
 }
 
