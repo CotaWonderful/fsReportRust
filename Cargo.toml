@@ -9,3 +9,8 @@ serde = { version = "1.0", features = ["derive"] }
 mysql_async = { version = "0.35.1" }
 rocket-multipart-form-data = { version = "0.10.7" }
 tokio = { version = "1.44.0" }
+serde_json = {version = "1.0.140"}
+
+[dependencies.mysql_common]
+version = "*"
+features = ["chrono"]

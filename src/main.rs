@@ -1,5 +1,7 @@
 #[macro_use] extern crate rocket;
 use rocket::serde::{Serialize, Deserialize, json::Json};
+use serde_json::json;
+use serde_json::Value;
 use rocket::fs::FileServer;
 use rocket::fs::NamedFile;
 use rocket::fs::relative;
@@ -15,6 +17,7 @@ use rocket_multipart_form_data::{mime, MultipartFormDataOptions, MultipartFormDa
 use rocket::tokio::time::{sleep, Duration};
 use mysql_async::{OptsBuilder, Conn, Opts};
 use mysql_async::prelude::*;
+use mysql_common::chrono::NaiveDateTime;
 
 // 屬性以 #[...] 或 #![...] 的形式出現
 // #[derive(...)] 是一種特殊的屬性（attribute），用於自動實作 trait。
@@ -25,60 +28,77 @@ struct Message {
     message: String,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+struct ReportList {
+    id: i32,
+    scan_time: NaiveDateTime,
+    scan_file: String,
+}
+
 #[derive(Deserialize, Debug, FromForm)]
 struct FormData {
     emp_no: String,
+    start_date: String,
+    end_date: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct ScanReport {
-    report_file: String,
-    report_data: Vec<u8>,
-}
-
-#[get("/")]
-async fn index() -> Option<NamedFile> {
+#[get("/get_report_list")]
+async fn get_report_list() -> Option<NamedFile> {
     let path: PathBuf = Path::new("static/index.html").to_path_buf();
     NamedFile::open(path).await.ok()
 }
 
-#[get("/message/<name>")]
-fn message(name: String) -> String {
-    format!("Hello, {}!", name)
-}
-
-#[get("/getReportList")]
-async fn get_report_list() -> String {
-    let path: PathBuf = Path::new("static/index.html").to_path_buf();
-    //NamedFile::open(path).await.ok()
-    format!("Hello, {}!", path.display())
-}
-
-#[post("/getReport", data = "<form>")]
-async fn get_report(form: Form<FormData>) -> String {
+#[post("/get_report_list", data = "<form>")]
+async fn get_report_list_post(form: Form<FormData>) -> Json<Vec<ReportList>> {
 
     let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
     let mut conn = Conn::new(opts).await.unwrap();
-    
+    println!("form {:#?}", form);
+    let sql =  format!("SELECT id FROM reports where emp_no = '{}' and scan_time between '{}' and '{}'", form.emp_no, form.start_date, form.end_date);
+    println!("sql {:#?}", sql);
     // SELECT語法
-    let loaded_report = format!("SELECT report_file, report_data FROM reports where emp_no = {}", form.emp_no)
+    let loaded_reports = format!("SELECT id, scan_time, scan_file FROM reports where emp_no='{}' AND scan_time between '{}' AND '{}'", form.emp_no, form.start_date, form.end_date)
         .with(())
-        .map(&mut conn, |(report_file, report_data)| ScanReport { report_file, report_data })
+        .map(&mut conn, |(id, scan_time, scan_file)| ReportList { id, scan_time, scan_file })
+        .await;
+      
+    println!("loaded_reports {:#?}", loaded_reports);
+    
+    //format!("OK")
+    Json(loaded_reports.unwrap())
+  
+}
+
+
+#[derive(Deserialize, Debug, FromForm)]
+struct FormData2 {
+    id: String,
+}
+#[derive(Debug, PartialEq, Eq, Clone, Serialize, Deserialize)]
+struct Report {
+    report_file: String,
+    report_data: Vec<u8>,
+}
+#[post("/get_report", data = "<form>")]
+async fn get_report(form: Form<FormData2>) -> String {
+    let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
+    let mut conn = Conn::new(opts).await.unwrap();
+    // SELECT語法
+    let loaded_reports = format!("SELECT report_file, report_data FROM reports where id='{}'", form.id)
+        .with(())
+        .map(&mut conn, |(report_file, report_data)| Report { report_file, report_data })
         .await;
     
-    drop(conn);
-    let mut res_msg = String::from("Error");
-    if let Ok(report) = loaded_report {
-        //format!("report_file: {}", report.report_file)
-        for r in report {
-            println!("{}", r.report_file);
-        }
-        format!("OK")
-    }
-    else {
-        format!("Error")
-    }
-
+    let mut report = loaded_reports.unwrap()[0].clone();
+    let report_data_str = String::from_utf8(report.report_data).unwrap();
+    println!("report_data_str {:#?}", report_data_str);
+    let return_data = json!({
+        "report_file": report.report_file,
+        "report_data": report_data_str
+    });
+    //println!("loaded_reports {:#?}", loaded_reports.unwrap()[0].report_file);
+    //Json(return_data)
+    report_data_str
 }
 
 // 處理fscliApp丟過來的F-Secure 報告(.html檔)
@@ -142,41 +162,58 @@ async fn upload_report(content_type: &ContentType, data: Data<'_>) -> String {
                 break;
             }
         };
-        let scan_file = multipart_form_data.files.remove("scan_file");
-        println!("scan_file {:?}", scan_file);
         
-        // 取得前端上傳的檔案，並寫入DB
-        let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
-        let mut conn = Conn::new(opts).await.unwrap();
-        if let Some(file_fields) = scan_file {
-            let file_field = &file_fields[0]; // Because we only put one "photo" field to the allowed_fields, the max length of this file_fields is 1.
-            let _path = &file_field.path; // 取得暫存檔路徑
-            // 讀取檔案內容,並寫入db
-            let mut f = match File::open(_path) {
-                Ok(f) => f,
-                Err(e) => {
-                    error_message = format!("Server端無法開啟前端上傳的檔案, 錯誤: {}", e);
-                    break;
-                }
-            };
-            let mut buffer = Vec::new();
-            match f.read_to_end(&mut buffer) {
-                Ok(_) => {},
-                Err(e) => {
-                    error_message = format!("Server端無法讀取前端上傳的檔案({}), 錯誤: {}",report_file, e); 
-                    break;
-                }
-            };
-            match conn.exec_drop("INSERT INTO reports(emp_no, scan_time, scan_file, result, report_file, report_data) VALUES (?, ?, ?, ?, ?, ?)", (user, scan_time, scan_file_name, result, report_file, buffer)).await {
-                Ok(_) => {},
-                Err(e) => {
-                    error_message = format!("Server端寫入DB失敗, 錯誤: {}", e);
-                    break;
-                }
+        // 建立sql連線
+        let opts = match Opts::from_url("mysql://wonderful:123456@localhost/fscli") {
+            Ok(opts) => opts,
+            Err(e) => {
+                error_message = format!("Server端無法連接資料庫, 錯誤: {}", e);
+                break;
             }
-        } else {
-            error_message = String::from("欄位不得為空: scan_file");
-        }
+        };
+        let mut conn = match Conn::new(opts).await {
+            Ok(conn) => conn,
+            Err(e) => {
+                error_message = format!("Server端無法連接資料庫, 錯誤: {}", e);
+                break;
+            }
+        };
+        // 讀取檔案
+        let file_fields_option = multipart_form_data.files.remove("scan_file");
+        let file_path = match file_fields_option {
+            Some(file_fields) => {
+                //let file_field = &file_fields[0]; // Because we only put one "photo" field to the allowed_fields, the max length of this file_fields is 1.
+                let _path = file_fields[0].path.clone(); // 取得暫存檔路徑
+                _path
+            }, 
+            None => {
+                error_message = String::from("Server端無法讀取前端上傳的檔案");
+                break;
+            }
+        };
+        let mut f = match File::open(file_path) {
+            Ok(f) => f,
+            Err(e) => {
+                error_message = format!("Server端無法開啟前端上傳的檔案, 錯誤: {}", e);
+                break;
+            }
+        };
+        let mut buffer = Vec::new();
+        match f.read_to_end(&mut buffer) {
+            Ok(_) => {},
+            Err(e) => {
+                error_message = format!("Server端無法讀取前端上傳的檔案({}), 錯誤: {}",report_file, e); 
+                break;
+            }
+        };
+        // 寫入資料庫
+        match conn.exec_drop("INSERT INTO reports(emp_no, scan_time, scan_file, result, report_file, report_data) VALUES (?, ?, ?, ?, ?, ?)", (user, scan_time, scan_file_name, result, report_file, buffer)).await {
+            Ok(_) => {},
+            Err(e) => {
+                error_message = format!("Server端寫入DB失敗, 錯誤: {}", e);
+                break;
+            }
+        };
         break;
     };
 
@@ -187,15 +224,10 @@ async fn upload_report(content_type: &ContentType, data: Data<'_>) -> String {
     String::from("ok")
 }
 
-/*#[post("/json", format = "json", data = "<data>")]
-fn post_json(data: Json<Message>) -> Json<Message> {
-    //data
-}*/
-
 #[launch]
 fn rocket() -> _ {
     rocket::build()
-        .mount("/", routes![index, message, get_report_list, get_report, upload_report])
+        .mount("/", routes![get_report_list, get_report_list_post, get_report, upload_report])
         .mount("/", FileServer::from(relative!("static"))) // 指定static目錄
 }
 

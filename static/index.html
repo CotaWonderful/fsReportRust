@@ -74,11 +74,11 @@
             }
 
             var post_data = {
-                sDate: sDate,
-                eDate: eDate,
+                start_date: sDate,
+                end_date: eDate,
                 emp_no: emp_no
             }
-            let res = await send_to_server(post_data, "POST", "getReportList");
+            let res = await send_to_server(post_data, "POST", "get_report_list");
             if (res) {
                 // 更新表格， 修改DOM
                 refreshDOM(res);
@@ -126,7 +126,7 @@
             var post_data = {
                 id: id
             }
-            let res = await send_to_server(post_data, "POST", "getReport");
+            let res = await send_to_server(post_data, "POST", "get_report");
             if (res) {
                 document.write(res);
             }
@@ -139,7 +139,7 @@
             $.ajax({
 			type: method,
 			data: post_data,
-			url: '{reverseProxyPrefix}/' + url,						
+			url:  url,						
 			success: result => {
                 resolve(result);
             },
