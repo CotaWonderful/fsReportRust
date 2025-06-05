@@ -35,6 +35,13 @@ struct ReportList {
     scan_file: String,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(crate = "rocket::serde")]
+struct User {
+    id: i32,
+    name: String,
+}
+
 #[derive(Deserialize, Debug, FromForm)]
 struct FormData {
     emp_no: String,
@@ -99,6 +106,20 @@ async fn get_report(form: Form<FormData2>) -> String {
     //println!("loaded_reports {:#?}", loaded_reports.unwrap()[0].report_file);
     //Json(return_data)
     report_data_str
+}
+
+#[post("/list_all_users")]
+async fn list_all_users() -> Json<Vec<User>> {
+    let opts = Opts::from_url("mysql://wonderful:123456@localhost/fscli").unwrap();
+    let mut conn = Conn::new(opts).await.unwrap();
+
+    let loaded_users = "SELECT id, name FROM users"
+        .with(())
+        .map(&mut conn, |(id, name)| User { id, name })
+        .await
+        .unwrap_or_else(|_| Vec::new()); // Return empty vec on error
+
+    Json(loaded_users)
 }
 
 // 處理fscliApp丟過來的F-Secure 報告(.html檔)
@@ -232,6 +253,25 @@ fn rocket() -> _ {
             port: 8002,
             ..rocket::Config::default()
         })
-        .mount("/", routes![get_report_list, get_report_list_post, get_report, upload_report])
+        .mount("/", routes![get_report_list, get_report_list_post, get_report, upload_report, list_all_users])
         .mount("/", FileServer::from(relative!("static"))) // 指定static目錄
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rocket; // Import the rocket instance from the parent module
+    use rocket::local::blocking::Client;
+    use rocket::http::Status;
+
+    #[test]
+    fn test_list_all_users() {
+        let client = Client::tracked(rocket()).expect("valid rocket instance");
+        let response = client.post("/list_all_users").dispatch();
+
+        assert_eq!(response.status(), Status::Ok);
+
+        let body = response.into_string().unwrap_or_default();
+        assert!(body.starts_with("["), "Response body should start with '['");
+        assert!(body.ends_with("]"), "Response body should end with ']'");
+    }
 }
